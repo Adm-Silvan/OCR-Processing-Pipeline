@@ -3,19 +3,19 @@ import uuid
 import weaviate
 import torch
 import numpy as np
+import stanza
 from transformers import AutoTokenizer, AutoModel
-from nltk.tokenize import sent_tokenize
 from sklearn.metrics.pairwise import cosine_similarity
-import nltk
 from weaviate.classes.config import Property, DataType
 from weaviate.connect import ConnectionParams
+from stanza.pipeline.multilingual import MultilingualPipeline
+from SPARQLWrapper import SPARQLWrapper, POST, BASIC, URLENCODED
 
-nltk.download('punkt')
 
 # --- CONFIGURATION ---
 MODEL_NAME = "jinaai/jina-embeddings-v3"
 TOKEN_LIMIT = 8192
-CHUNK_TOKEN_LIMIT = 256
+CHUNK_TOKEN_LIMIT = 512
 SIMILARITY_THRESHOLD = 0.80
 
 # --- WEAVIATE CONNECTION ---
@@ -32,9 +32,11 @@ client = weaviate.WeaviateClient(
 client.connect()
 
 # --- SCHEMA CREATION ---
-if not client.collections.exists("LateChunk"):
+CHUNK_COLLECTION = "Chunk"
+DOC_COLLECTION = "Document"
+if not client.collections.exists(CHUNK_COLLECTION):
     client.collections.create(
-        name="LateChunk",
+        name=CHUNK_COLLECTION,
         properties=[
             Property(name="content", data_type=DataType.TEXT),
             Property(name="chunk_id", data_type=DataType.TEXT),
@@ -43,14 +45,15 @@ if not client.collections.exists("LateChunk"):
         ],
     )
 
-if not client.collections.exists("DocumentEmbedding"):
+if not client.collections.exists(DOC_COLLECTION):
     client.collections.create(
-        name="DocumentEmbedding",
+        name=DOC_COLLECTION,
         properties=[
             Property(name="doc_id", data_type=DataType.TEXT),
             Property(name="file_name", data_type=DataType.TEXT)
         ],
     )
+
 
 # --- MODEL LOADING ---
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
@@ -59,20 +62,37 @@ model.eval()
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 model.to(DEVICE)
 
-# --- NEW MERGE FUNCTION ---
-def merge_single_line_chunks(chunked_data):
-    """Merge single-line chunks into previous chunk to avoid fragmentation"""
+
+# --- STANZA SETUP for MULTILINGUAL TOKENIZATION ---
+# Download models if necessary (run once)
+stanza.download('de')
+stanza.download('fr')
+
+# Initialize multilingual pipeline with tokenizer only
+nlp = MultilingualPipeline(processors='tokenize')
+
+
+# --- MERGE FUNCTION WITH CHUNK SIZE LIMIT ---
+def merge_and_limit_chunks(chunked_data, max_tokens):
+    """Merge single-line chunks if result stays within max_tokens."""
     merged = []
     for chunk, span in chunked_data:
-        if len(chunk) == 1 and merged:  # Single-line chunk with previous exists
+        chunk_token_count = span[1] - span[0]
+        if merged:
             prev_chunk, prev_span = merged[-1]
-            merged[-1] = (
-                prev_chunk + chunk,          # Combine text
-                (prev_span[0], span[1])      # Combine token spans
-            )
+            prev_token_count = prev_span[1] - prev_span[0]
+            combined_token_count = prev_token_count + chunk_token_count
+            if len(chunk) == 1 and combined_token_count <= max_tokens:
+                merged[-1] = (
+                    prev_chunk + chunk,
+                    (prev_span[0], span[1])
+                )
+            else:
+                merged.append((chunk, span))
         else:
             merged.append((chunk, span))
     return merged
+
 
 def get_sentence_token_spans(text, sentences):
     """Map sentences to token indices"""
@@ -87,6 +107,39 @@ def get_sentence_token_spans(text, sentences):
         tokens.extend(sent_tokens)
         idx = end
     return spans, tokens
+
+def store2graph(text,id,order): 
+    # Define the SPARQL endpoint URL for the repository
+    endpoint_url = "http://localhost:7200/repositories/AIS/statements"
+
+    # Initialize SPARQLWrapper
+    sparql = SPARQLWrapper(endpoint_url)
+    sparql.setHTTPAuth(BASIC)  # Optional, add if authentication is required
+    # sparql.setCredentials("username", "password")  # Uncomment if needed
+    sparql.setMethod(POST)
+    sparql.setRequestMethod(URLENCODED)
+    tailored_text = text.replace("/", "").replace("{", "").replace("}", "").replace("\\", "")
+    # Define sample RDF triples in Turtle format to insert
+    insert_data = f"""
+    PREFIX rico: <https://www.ica.org/standards/RiC/ontology#>
+    INSERT DATA {{
+        GRAPH <http://example.org/graph/ais> {{
+    <https://culture.ld.admin.ch/ais/{id}> rico:WholePartRelation <https://culture.ld.admin.ch/ais/{id}/{order}> .
+    <https://culture.ld.admin.ch/ais/{id}/{order}> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> rico:RecordPart;
+    <https://schema.org/text> '''{tailored_text}'''.
+
+    }}
+    }}
+    """
+
+    sparql.setQuery(insert_data)
+
+    try:
+        response = sparql.query()
+        print(f"Stored triples for chunk {id}/{order}")
+    except Exception as e:
+        print("Failed to upload data:", e)
+
 def embed_texts(texts):
     # Batch embedding for efficiency
     inputs = tokenizer(
@@ -105,6 +158,8 @@ def embed_texts(texts):
     summed = torch.sum(outputs.last_hidden_state * mask, 1)
     counts = torch.clamp(mask.sum(1), min=1e-9)
     return (summed / counts).cpu().numpy()
+
+
 def semantic_chunking(sentences, sentence_embeddings, token_limit=CHUNK_TOKEN_LIMIT, sim_threshold=SIMILARITY_THRESHOLD):
     """Group sentences into semantically coherent chunks."""
     chunks = []
@@ -115,16 +170,14 @@ def semantic_chunking(sentences, sentence_embeddings, token_limit=CHUNK_TOKEN_LI
     for i, (sent, emb) in enumerate(zip(sentences, sentence_embeddings)):
         sent_tokens = tokenizer.tokenize(sent)
         sent_token_count = len(sent_tokens)
-        # If adding this sentence would exceed chunk token limit, start new chunk
+
         if chunk_token_count + sent_token_count > token_limit and chunk:
             chunks.append((chunk, chunk_embs))
             chunk, chunk_embs, chunk_token_count = [], [], 0
 
-        # If not first sentence in chunk, check semantic similarity with previous
         if chunk:
             sim = cosine_similarity([emb], [chunk_embs[-1]])[0][0]
             if sim < sim_threshold:
-                # Semantic break, start new chunk
                 chunks.append((chunk, chunk_embs))
                 chunk, chunk_embs, chunk_token_count = [], [], 0
 
@@ -132,16 +185,21 @@ def semantic_chunking(sentences, sentence_embeddings, token_limit=CHUNK_TOKEN_LI
         chunk_embs.append(emb)
         chunk_token_count += sent_token_count
 
-    # Add remaining chunk
     if chunk:
         chunks.append((chunk, chunk_embs))
     return chunks
 
-def process_file(file_path):
+
+def stanza_sentence_tokenize(text):
+    """Tokenize text using Stanza pipeline, returns list of sentences (text strings)."""
+    doc = nlp(text)
+    return [sentence.text for sentence in doc.sentences]
+
+
+def process_file(file_path, id, signature):
     with open(file_path, "r", encoding="utf-8") as f:
         text = f.read()
     file_name = os.path.basename(file_path)
-    doc_id = str(uuid.uuid4())
 
     inputs = tokenizer(
         text,
@@ -156,11 +214,11 @@ def process_file(file_path):
     # --- SINGLE WINDOW PROCESSING ---
     if num_tokens <= TOKEN_LIMIT:
         print("Processing with late chunking (single window, variable-length semantic chunks)")
-        sentences = sent_tokenize(text, language="german")
+        sentences = stanza_sentence_tokenize(text)
         sentence_embeddings = embed_texts(sentences)
         chunked_sentences = semantic_chunking(sentences, sentence_embeddings)
         sentence_token_spans, all_tokens = get_sentence_token_spans(text, sentences)
-        
+
         # Map chunks to token spans
         chunk_token_spans = []
         idx = 0
@@ -170,9 +228,9 @@ def process_file(file_path):
             chunk_token_spans.append((chunk_start, chunk_end))
             idx += len(chunk)
 
-        # Merge single-line chunks
+        # Merge single-line chunks with length limit
         chunk_data = list(zip([chunk for chunk, _ in chunked_sentences], chunk_token_spans))
-        merged_data = merge_single_line_chunks(chunk_data)
+        merged_data = merge_and_limit_chunks(chunk_data, CHUNK_TOKEN_LIMIT)
 
         # Generate token embeddings
         with torch.no_grad():
@@ -186,25 +244,25 @@ def process_file(file_path):
             if end > len(token_embeddings):
                 end = len(token_embeddings)
             if end > start:
-                chunk_emb = token_embeddings[start:end].mean(dim=0).numpy()
-                chunk_id = str(uuid.uuid4())
-                client.collections.get("LateChunk").data.insert(
+                chunk_emb = token_embeddings[start:end].mean(dim=0).to(torch.float32).numpy()
+                chunk_id = f"{id}/{order}"
+                client.collections.get(CHUNK_COLLECTION).data.insert(
                     properties={
                         "content": chunk_text,
                         "chunk_id": chunk_id,
-                        "doc_id": doc_id,
+                        "doc_id": id,
                         "chunk_order": order
                     },
                     vector=chunk_emb.tolist()
                 )
-
+            store2graph(chunk_text,id,order)
         # Store document embedding
-        doc_emb = token_embeddings.mean(dim=0).numpy()
-        client.collections.get("DocumentEmbedding").data.insert(
-            properties={"doc_id": doc_id, "file_name": file_name},
+        doc_emb = token_embeddings.mean(dim=0).to(torch.float32).numpy()
+        client.collections.get(DOC_COLLECTION).data.insert(
+            properties={"doc_id": id, "file_name": file_name},
             vector=doc_emb.tolist()
         )
-        print(f"Stored {len(chunked_sentences)} semantic late chunks and document embedding in Weaviate for '{file_name}'.")
+        print(f"Stored {len(merged_data)} semantic late chunks and document embedding in Weaviate for '{file_name}'.")
 
     # --- MULTI-WINDOW PROCESSING ---
     else:
@@ -222,14 +280,14 @@ def process_file(file_path):
 
         global_chunk_order = 0  # GLOBAL ORDER COUNTER
         doc_embeddings = []
-        
+
         for w_start, w_end in windows:
             window_tokens = tokens[w_start:w_end]
             window_text = tokenizer.convert_tokens_to_string(window_tokens)
-            window_sentences = sent_tokenize(window_text, language="german")
+            window_sentences = stanza_sentence_tokenize(window_text)
             window_sentence_embeddings = embed_texts(window_sentences)
             chunked_sentences = semantic_chunking(window_sentences, window_sentence_embeddings)
-            
+
             # Process window
             sentence_token_spans, _ = get_sentence_token_spans(window_text, window_sentences)
             chunk_token_spans = []
@@ -240,9 +298,9 @@ def process_file(file_path):
                 chunk_token_spans.append((chunk_start, chunk_end))
                 idx += len(chunk)
 
-            # Merge single-line chunks
+            # Merge single-line chunks with length limit
             chunk_data = list(zip([chunk for chunk, _ in chunked_sentences], chunk_token_spans))
-            merged_data = merge_single_line_chunks(chunk_data)
+            merged_data = merge_and_limit_chunks(chunk_data, CHUNK_TOKEN_LIMIT)
 
             # Generate embeddings
             inputs_win = tokenizer(
@@ -263,32 +321,31 @@ def process_file(file_path):
                 if end > len(token_embeddings):
                     end = len(token_embeddings)
                 if end > start:
-                    chunk_emb = token_embeddings[start:end].mean(dim=0).numpy()
-                    chunk_id = str(uuid.uuid4())
-                    client.collections.get("LateChunk").data.insert(
+                    chunk_emb = token_embeddings[start:end].mean(dim=0).to(torch.float32).numpy()
+                    chunk_id = f"{id}/{global_chunk_order}"
+                    client.collections.get(CHUNK_COLLECTION).data.insert(
                         properties={
                             "content": chunk_text,
                             "chunk_id": chunk_id,
-                            "doc_id": doc_id,
+                            "doc_id": id,
                             "chunk_order": global_chunk_order
                         },
                         vector=chunk_emb.tolist()
                     )
+                    store2graph(chunk_text,id,global_chunk_order)
                     global_chunk_order += 1
 
             # Collect window embeddings
-            doc_embeddings.append(token_embeddings.mean(dim=0).numpy())
+            doc_embeddings.append(token_embeddings.mean(dim=0).to(torch.float32).numpy())
 
         # Store document embedding
         doc_emb = np.mean(doc_embeddings, axis=0)
-        client.collections.get("DocumentEmbedding").data.insert(
-            properties={"doc_id": doc_id, "file_name": file_name},
+        client.collections.get(DOC_COLLECTION).data.insert(
+            properties={"doc_id": id, "file_name": file_name},
             vector=doc_emb.tolist()
         )
-        print(f"Stored {global_chunk_order+1} semantic late chunks and document embedding in Weaviate for '{file_name}'.")
-# --- MAIN EXECUTION ---
-client.close()
+        print(f"Stored {global_chunk_order} semantic late chunks and document embedding in Weaviate for '{file_name}'.")
 if __name__ == "__main__":
     client.connect()
-    process_file("C:/Users/Silvan/Data/OCR_Protocols/1890/01/1890-01-03.txt")
+    process_file("C:/Users/Silvan/Data/OCR_Protocols/1954/05/1954-05-03.txt")
     client.close()

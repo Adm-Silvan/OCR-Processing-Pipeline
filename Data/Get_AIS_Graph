@@ -1,1 +1,0 @@
-curl  -d "format=turtle" -d "query=CONSTRUCT { ?s ?p ?o } WHERE { GRAPH <https://lindas.admin.ch/sfa/ais> { ?s ?p ?o } }" https://culture.ld.admin.ch/sparql/ > ais_snapshot.ttl
