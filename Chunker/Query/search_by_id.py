@@ -23,10 +23,10 @@ client = weaviate.WeaviateClient(
 )
 client.connect()
 
-collection = client.collections.use("Chunk")
-filters = Filter.by_property("chunk_id").equal("32329223/2")
+collection = client.collections.use("Chunks")
+filters = Filter.by_property("chunk_id").equal("32329184")
 
-response = collection.query.fetch_objects(filters=filters, limit=1)
+response = collection.query.fetch_objects(filters=filters, limit=75)
 for obj in response.objects:
     print(obj.properties)
 client.close()

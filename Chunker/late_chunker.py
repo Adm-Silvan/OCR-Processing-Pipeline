@@ -16,7 +16,9 @@ from SPARQLWrapper import SPARQLWrapper, POST, BASIC, URLENCODED
 MODEL_NAME = "jinaai/jina-embeddings-v3"
 TOKEN_LIMIT = 8192
 CHUNK_TOKEN_LIMIT = 512
-SIMILARITY_THRESHOLD = 0.80
+SIMILARITY_THRESHOLD = 0.89
+ENDPOINT_URL = "http://localhost:7200/repositories/AIS/statements"
+GRAPH = "https://lindas.admin.ch/sfa/ais"
 
 # --- WEAVIATE CONNECTION ---
 client = weaviate.WeaviateClient(
@@ -32,16 +34,17 @@ client = weaviate.WeaviateClient(
 client.connect()
 
 # --- SCHEMA CREATION ---
-CHUNK_COLLECTION = "Chunk"
-DOC_COLLECTION = "Document"
+CHUNK_COLLECTION = "Chunks"
+DOC_COLLECTION = "Documents"
 if not client.collections.exists(CHUNK_COLLECTION):
     client.collections.create(
         name=CHUNK_COLLECTION,
         properties=[
             Property(name="content", data_type=DataType.TEXT),
+            Property(name="language", data_type=DataType.TEXT),
             Property(name="chunk_id", data_type=DataType.TEXT),
             Property(name="doc_id", data_type=DataType.TEXT),
-            Property(name="chunk_order", data_type=DataType.INT)  # NEW ORDER FIELD
+            Property(name="chunk_order", data_type=DataType.INT)
         ],
     )
 
@@ -50,6 +53,7 @@ if not client.collections.exists(DOC_COLLECTION):
         name=DOC_COLLECTION,
         properties=[
             Property(name="doc_id", data_type=DataType.TEXT),
+            Property(name="language", data_type=DataType.TEXT),
             Property(name="file_name", data_type=DataType.TEXT)
         ],
     )
@@ -67,9 +71,10 @@ model.to(DEVICE)
 # Download models if necessary (run once)
 stanza.download('de')
 stanza.download('fr')
+stanza.download('it')
+nlp = MultilingualPipeline(processors='tokenize')
 
 # Initialize multilingual pipeline with tokenizer only
-nlp = MultilingualPipeline(processors='tokenize')
 
 
 # --- MERGE FUNCTION WITH CHUNK SIZE LIMIT ---
@@ -108,9 +113,9 @@ def get_sentence_token_spans(text, sentences):
         idx = end
     return spans, tokens
 
-def store2graph(text,id,order): 
+def store2graph(text,id,order,language): 
     # Define the SPARQL endpoint URL for the repository
-    endpoint_url = "http://localhost:7200/repositories/AIS/statements"
+    endpoint_url = ENDPOINT_URL
 
     # Initialize SPARQLWrapper
     sparql = SPARQLWrapper(endpoint_url)
@@ -123,10 +128,10 @@ def store2graph(text,id,order):
     insert_data = f"""
     PREFIX rico: <https://www.ica.org/standards/RiC/ontology#>
     INSERT DATA {{
-        GRAPH <http://example.org/graph/ais> {{
+        GRAPH <{GRAPH}> {{
     <https://culture.ld.admin.ch/ais/{id}> rico:WholePartRelation <https://culture.ld.admin.ch/ais/{id}/{order}> .
     <https://culture.ld.admin.ch/ais/{id}/{order}> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> rico:RecordPart;
-    <https://schema.org/text> '''{tailored_text}'''.
+    <https://schema.org/text> '''{tailored_text}'''@{language}.
 
     }}
     }}
@@ -214,7 +219,9 @@ def process_file(file_path, id, signature):
     # --- SINGLE WINDOW PROCESSING ---
     if num_tokens <= TOKEN_LIMIT:
         print("Processing with late chunking (single window, variable-length semantic chunks)")
-        sentences = stanza_sentence_tokenize(text)
+        doc = nlp(text)
+        language = doc.lang
+        sentences = [sentence.text for sentence in doc.sentences]
         sentence_embeddings = embed_texts(sentences)
         chunked_sentences = semantic_chunking(sentences, sentence_embeddings)
         sentence_token_spans, all_tokens = get_sentence_token_spans(text, sentences)
@@ -241,6 +248,7 @@ def process_file(file_path, id, signature):
         for order, (chunk, span) in enumerate(merged_data):
             start, end = span
             chunk_text = " ".join(chunk)
+            chunk_lang = nlp(chunk_text).lang
             if end > len(token_embeddings):
                 end = len(token_embeddings)
             if end > start:
@@ -249,17 +257,18 @@ def process_file(file_path, id, signature):
                 client.collections.get(CHUNK_COLLECTION).data.insert(
                     properties={
                         "content": chunk_text,
+                        "language": chunk_lang,
                         "chunk_id": chunk_id,
                         "doc_id": id,
                         "chunk_order": order
                     },
                     vector=chunk_emb.tolist()
                 )
-            store2graph(chunk_text,id,order)
+            store2graph(chunk_text,id,order,chunk_lang)
         # Store document embedding
         doc_emb = token_embeddings.mean(dim=0).to(torch.float32).numpy()
         client.collections.get(DOC_COLLECTION).data.insert(
-            properties={"doc_id": id, "file_name": file_name},
+            properties={"doc_id": id, "language": language, "file_name": file_name},
             vector=doc_emb.tolist()
         )
         print(f"Stored {len(merged_data)} semantic late chunks and document embedding in Weaviate for '{file_name}'.")
@@ -284,7 +293,9 @@ def process_file(file_path, id, signature):
         for w_start, w_end in windows:
             window_tokens = tokens[w_start:w_end]
             window_text = tokenizer.convert_tokens_to_string(window_tokens)
-            window_sentences = stanza_sentence_tokenize(window_text)
+            doc = nlp(window_text)
+            language = doc.lang
+            window_sentences = [sentence.text for sentence in doc.sentences]
             window_sentence_embeddings = embed_texts(window_sentences)
             chunked_sentences = semantic_chunking(window_sentences, window_sentence_embeddings)
 
@@ -318,6 +329,7 @@ def process_file(file_path, id, signature):
             for (chunk, span) in merged_data:
                 start, end = span
                 chunk_text = " ".join(chunk)
+                chunk_lang = nlp(chunk_text).lang
                 if end > len(token_embeddings):
                     end = len(token_embeddings)
                 if end > start:
@@ -326,13 +338,14 @@ def process_file(file_path, id, signature):
                     client.collections.get(CHUNK_COLLECTION).data.insert(
                         properties={
                             "content": chunk_text,
+                            "language": chunk_lang,
                             "chunk_id": chunk_id,
                             "doc_id": id,
                             "chunk_order": global_chunk_order
                         },
                         vector=chunk_emb.tolist()
                     )
-                    store2graph(chunk_text,id,global_chunk_order)
+                    store2graph(chunk_text,id,global_chunk_order,chunk_lang)
                     global_chunk_order += 1
 
             # Collect window embeddings
@@ -341,7 +354,7 @@ def process_file(file_path, id, signature):
         # Store document embedding
         doc_emb = np.mean(doc_embeddings, axis=0)
         client.collections.get(DOC_COLLECTION).data.insert(
-            properties={"doc_id": id, "file_name": file_name},
+            properties={"doc_id": id, "language": language, "file_name": file_name},
             vector=doc_emb.tolist()
         )
         print(f"Stored {global_chunk_order} semantic late chunks and document embedding in Weaviate for '{file_name}'.")

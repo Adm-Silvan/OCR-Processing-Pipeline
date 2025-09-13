@@ -16,7 +16,7 @@ client = weaviate.WeaviateClient(
 PATH = "C:/Users/Silvan/Data/OCR_Protocols/"
 
 # load the JSON file
-for year in range(1854,1949):
+for year in range(1950,1973):
     for month in range(1,13):
         with open(PATH+f"Manifests/{year}-{month}.json", "r", encoding="utf-8") as file:
             data = json.load(file)

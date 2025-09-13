@@ -43,7 +43,7 @@ def embed_query_text(query_text):
     return query_vector.tolist()
 
 
-def search_chunks(query_text, top_k=5):
+def hybrid_search(query_text, top_k=3):
     query_vector = embed_query_text(query_text)
 
     client = weaviate.WeaviateClient(
@@ -57,7 +57,33 @@ def search_chunks(query_text, top_k=5):
         )
     )
     client.connect()
-    collection = client.collections.get("LateChunk")
+    collection = client.collections.get("Chunk")
+    results = collection.query.hybrid(
+            query=query_text,
+            vector=query_vector,
+            return_metadata=weaviate.classes.query.MetadataQuery(score=True, explain_score=True),
+            alpha=0.25,
+            limit=top_k,
+            return_properties=["content", "chunk_id", "doc_id", "chunk_order"]
+        )
+    client.close()
+    return results
+
+def vector_search(query_text, top_k=3):
+    query_vector = embed_query_text(query_text)
+
+    client = weaviate.WeaviateClient(
+        connection_params=ConnectionParams.from_params(
+            http_host="localhost",
+            http_port=8080,
+            http_secure=False,
+            grpc_host="localhost",
+            grpc_port=50051,
+            grpc_secure=False,
+        )
+    )
+    client.connect()
+    collection = client.collections.get("Chunk")
     results = collection.query.near_vector(
             near_vector=query_vector,
             return_metadata=weaviate.classes.query.MetadataQuery(certainty=True),
@@ -71,7 +97,14 @@ def search_chunks(query_text, top_k=5):
 
 if __name__ == "__main__":
     # Example usage:
-    user_query = "Which text passages are from the month of july and talk about Bern?"
-    retrieval_results = search_chunks(user_query, top_k=5)
-    print(retrieval_results.generated)
-    print(retrieval_results.objects)
+    user_query = "Giuseppe Francesco Mezzavita"
+    print("QUERY: " + user_query)
+    retrieval_results = hybrid_search(user_query, top_k=5)
+    print("\nHYBRID SEARCH RESULTS\n-------------------------------------------------")
+    for o in retrieval_results.objects:
+         print(o.properties)
+    print("\nVECTOR SEARCH RESULTS\n-------------------------------------------------")
+    user_query = "Ich such informationen über Lausanne in den 70er Jahren"
+    retrieval_results = vector_search(user_query, top_k=5)
+    for o in retrieval_results.objects:
+        print(o.properties)

@@ -12,5 +12,5 @@ client = weaviate.WeaviateClient(
     )
 )
 client.connect()
-client.collections.delete("Chunk")
+client.collections.delete("Documents")
 client.close()
