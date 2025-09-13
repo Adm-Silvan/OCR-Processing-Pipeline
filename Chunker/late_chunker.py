@@ -290,5 +290,5 @@ def process_file(file_path):
 client.close()
 if __name__ == "__main__":
     client.connect()
-    process_file("C:/Data/OCR_Protocols/1890/01/1890-01-03.txt")
+    process_file("C:/Users/Silvan/Data/OCR_Protocols/1890/01/1890-01-03.txt")
     client.close()

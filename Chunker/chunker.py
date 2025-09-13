@@ -2,7 +2,7 @@ from langchain_experimental.text_splitter import SemanticChunker
 from langchain_ollama import OllamaEmbeddings
 
 # Read your text file
-with open("c:/Users/Silvan/Documents/Obsidian Fusion/Uni/CAS Data Engineering/OCR-Processing-Pipeline/Entity_Extractor/1973-12-18.txt", "r", encoding="utf-8") as f:
+with open("c:/Users/Silvan/Repo/OCR-Processing-Pipeline/Entity_Extractor/1973-12-18.txt", "r", encoding="utf-8") as f:
     text = f.read()
 
 # Set up Ollama embeddings (make sure Ollama is running locally)
