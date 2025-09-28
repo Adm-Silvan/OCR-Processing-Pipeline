@@ -270,7 +270,7 @@ def ner_lang_chunks(chunks, language, date, client):
                 print(f"Matched people in chunk {order}, passing to LLM for plausbility checking...")
                 logging.info(f"Matched people in chunk {order}, passing to LLM for plausbility checking")   
                 people = get_roles_apertus(candidates['people'],text,language)
-                if people.get("people"):
+                if people:
                     entities = {
                         "people":people["people"],
                         "organizations":candidates["organizations"],

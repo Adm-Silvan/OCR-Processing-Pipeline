@@ -86,6 +86,13 @@ def get_roles_apertus(combined_entities, text, language):
     3. Für die Personen deren Rollen im Text und in der Beschreibung übereinstimmen, fügen Sie deren Name und URL zum folgenden Wörterbuchstruktur hinzu. 
     {{"people": [{{"name": "...", "url": "... ",}}, ... ]}}
     Geben Sie nur genau diesen Dictionary zurück und sonst nichts und stellen Sie sicher, dass es in der richtigen JSON-Syntax wiedergegeben wird.
+    
+    Beispielsweise bei folgenden Entitäten:
+    {{"people":[{{'birthyear': '1851', 'deathyear': '1924.0', 'description': '∗︎\xa02.9.1851 St. Gallen, ✝︎\xa026.11.1924 St. Gallen, reformiert, von St. Gallen. Sohn des Karl Jakob. ∞︎\xa0Anna Pauline Ze  ellweger. Kantonsschule St. Gallen, danach Handelslehre. Leitende Position im St. Galler Textilhandelshaus Ulrich von Caspar Vonwiller. Aus diesem wurde 1892 die weltweit tätige Stickerei-Exportfirma Hoffmann, Huber & Co. (ab 1909 Stickerei-AG Union), die Max Hoffmann als Miteigner leitete. Hoffmann erlebte den grossen Aufschwung der Maschinenstickerei, deren Anliegen er mit rastlosem Engagement förderte, unter anderem als Delegierter in Handelsvertragsverhandlungen und 1902-1917 als Mitglied des Kaufmännischen Direktoriums St. Gallen. 1877 Mitgründer und dann Förderer des Konzertvereins St. Gallen.', 'name': 'Max Hoffmann',  'url': 'http://hls-dhs-dss.ch/de/articles/027877/2007-12-18/'}}, {{'roles': None, 'deathyear': '1927.0', 'birthyear': '1857', 'name': 'Arthur Hoffmann', 'description': '∗︎\xa019.6.1857 (nicht der 18..6.) St. Gallen, ✝︎\xa023.7.1927 St. Gallen, reformiert, von St. Gallen. Jurist, Ständerat des Kantons St. Gallen, freisinniger Bundesrat.', 'url': 'http://hls-dhs-dss.ch/de/artticles/003991/2022-03-14/'}}]}}
+    und den folgenden Text:
+    "Ausserordentliche 118. Sitzung des Schweizerischen Bundesrates. Montag, den 19.Oktober 1914, vormittags 9 Uhr. Präsidium : Herr Bundespräsident Hoffmann. Mitglieder: Herr Vizepräsident Motta und Herren Bundesräte Müller, Decoppet und Calonder. Abwesend (wegen Unpässlichkeit): Herren Bundes- räte Forrer und Schulthess. Aktuariat : Herr Bundeskanzler Schatzmann und Herr Vize- kanzler David. Départemental"
+    Nur die zweite Entität hat die richtige Rolle „Bundesrat“ in ihrer Beschreibung, die mit „Bundespräsident“ im Text übereinstimmt. Es sollte nur die richtige Entität zurückgegeben werden. Die Ausgabe sollte lauten:
+    {{"people": [{{"name": "Arthur Hoffmann", "url": "http://hls-dhs-dss.ch/de/artticles/003991/2022-03-14/",}} ]}}
     """
     fr_llm_prompt = f"""Étant donné les entités extraites suivantes d'un document :
 
@@ -100,6 +107,13 @@ def get_roles_apertus(combined_entities, text, language):
     2. Vérifiez si les rôles que vous avez identifiés correspondent à ceux que vous pouvez identifier dans la description.
     3. Pour les personnes dont les rôles correspondent dans le texte et dans la description, ajoutez leur nom et leur URL à la structure du dictionnaire suivante. 
     Renvoie uniquement ce dictionnaire et rien d'autre en veillant à ce qu'il soit dans une syntaxe JSON correcte.
+    
+    Par exemple, étant donné les entités suivantes :
+    {{"people":[{{'birthyear': '1851', 'deathyear': '1924.0', 'description': '∗︎\xa02.9.1851 St. Gallen, ✝︎\xa026.11.1924 St. Gallen, reformiert, von St. Gallen. Sohn des Karl Jakob. ∞︎\xa0Anna Pauline Ze  ellweger. Kantonsschule St. Gallen, danach Handelslehre. Leitende Position im St. Galler Textilhandelshaus Ulrich von Caspar Vonwiller. Aus diesem wurde 1892 die weltweit tätige Stickerei-Exportfirma Hoffmann, Huber & Co. (ab 1909 Stickerei-AG Union), die Max Hoffmann als Miteigner leitete. Hoffmann erlebte den grossen Aufschwung der Maschinenstickerei, deren Anliegen er mit rastlosem Engagement förderte, unter anderem als Delegierter in Handelsvertragsverhandlungen und 1902-1917 als Mitglied des Kaufmännischen Direktoriums St. Gallen. 1877 Mitgründer und dann Förderer des Konzertvereins St. Gallen.', 'name': 'Max Hoffmann',  'url': 'http://hls-dhs-dss.ch/de/articles/027877/2007-12-18/'}}, {{'roles': None, 'deathyear': '1927.0', 'birthyear': '1857', 'name': 'Arthur Hoffmann', 'description': '∗︎\xa019.6.1857 (nicht der 18..6.) St. Gallen, ✝︎\xa023.7.1927 St. Gallen, reformiert, von St. Gallen. Jurist, Ständerat des Kantons St. Gallen, freisinniger Bundesrat.', 'url': 'http://hls-dhs-dss.ch/de/artticles/003991/2022-03-14/'}}]}}
+    et le texte suivant :
+    "Ausserordentliche 118. Sitzung des Schweizerischen Bundesrates. Montag, den 19.Oktober 1914, vormittags 9 Uhr. Präsidium : Herr Bundespräsident Hoffmann. Mitglieder: Herr Vizepräsident Motta und Herren Bundesräte Müller, Decoppet und Calonder. Abwesend (wegen Unpässlichkeit): Herren Bundes- räte Forrer und Schulthess. Aktuariat : Herr Bundeskanzler Schatzmann und Herr Vize- kanzler David. Départemental"
+    Seule la deuxième entité a le rôle correct « Bundesrat » dans sa description, correspondant à Bundespräsident dans le texte. Seule l'entité correcte doit être renvoyée. Le résultat doit être :
+    {{"people": [{{"name": "Arthur Hoffmann", "url": "http://hls-dhs-dss.ch/de/artticles/003991/2022-03-14/",}} ]}}
     """
     it_llm_prompt = f"""Date le seguenti entità estratte da un documento:
 
@@ -115,6 +129,13 @@ def get_roles_apertus(combined_entities, text, language):
     3. Per le persone i cui ruoli corrispondono nel testo e nella descrizione, aggiungi il loro nome e URL alla seguente struttura del dizionario. 
     {{"people": [{{"name": "...", "url": "... ",}}, ... ]}}
     Restituisci solo questo dizionario e nient'altro, assicurandoti che sia scritto nella sintassi JSON corretta.
+    
+    Ad esempio, date le seguenti entità:
+    {{"people":[{{'birthyear': '1851', 'deathyear': '1924.0', 'description': '∗︎\xa02.9.1851 St. Gallen, ✝︎\xa026.11.1924 St. Gallen, reformiert, von St. Gallen. Sohn des Karl Jakob. ∞︎\xa0Anna Pauline Ze  ellweger. Kantonsschule St. Gallen, danach Handelslehre. Leitende Position im St. Galler Textilhandelshaus Ulrich von Caspar Vonwiller. Aus diesem wurde 1892 die weltweit tätige Stickerei-Exportfirma Hoffmann, Huber & Co. (ab 1909 Stickerei-AG Union), die Max Hoffmann als Miteigner leitete. Hoffmann erlebte den grossen Aufschwung der Maschinenstickerei, deren Anliegen er mit rastlosem Engagement förderte, unter anderem als Delegierter in Handelsvertragsverhandlungen und 1902-1917 als Mitglied des Kaufmännischen Direktoriums St. Gallen. 1877 Mitgründer und dann Förderer des Konzertvereins St. Gallen.', 'name': 'Max Hoffmann',  'url': 'http://hls-dhs-dss.ch/de/articles/027877/2007-12-18/'}}, {{'roles': None, 'deathyear': '1927.0', 'birthyear': '1857', 'name': 'Arthur Hoffmann', 'description': '∗︎\xa019.6.1857 (nicht der 18..6.) St. Gallen, ✝︎\xa023.7.1927 St. Gallen, reformiert, von St. Gallen. Jurist, Ständerat des Kantons St. Gallen, freisinniger Bundesrat.', 'url': 'http://hls-dhs-dss.ch/de/artticles/003991/2022-03-14/'}}]}}
+    e il seguente testo:
+    "Ausserordentliche 118. Sitzung des Schweizerischen Bundesrates. Montag, den 19.Oktober 1914, vormittags 9 Uhr. Präsidium : Herr Bundespräsident Hoffmann. Mitglieder: Herr Vizepräsident Motta und Herren Bundesräte Müller, Decoppet und Calonder. Abwesend (wegen Unpässlichkeit): Herren Bundes- räte Forrer und Schulthess. Aktuariat : Herr Bundeskanzler Schatzmann und Herr Vize- kanzler David. Départemental"
+    Solo la seconda entità ha il ruolo corretto “Bundesrat” nella sua descrizione, corrispondente a Bundespräsident nel testo. Dovrebbe essere restituita solo l'entità corretta. Il risultato dovrebbe essere:
+    {{"people": [{{"name": "Arthur Hoffmann", "url": "http://hls-dhs-dss.ch/de/artticles/003991/2022-03-14/",}} ]}}
     """
     if language == "de":
         prompt = de_llm_prompt

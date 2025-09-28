@@ -28,7 +28,7 @@ for name in collections:
     print(name) """
 
 collection = client.collections.use("Persons")
-filters = Filter.by_property("name").equal("Hermann Flückiger")
+filters = Filter.by_property("url").equal("http://hls-dhs-dss.ch/de/articles/003991/2022-03-14/")
 
 response = collection.query.fetch_objects(filters=filters, limit=75)
 for obj in response.objects:
