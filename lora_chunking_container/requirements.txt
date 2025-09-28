@@ -1,0 +1,19 @@
+uvicorn[standard]
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch 
+torchvision 
+torchaudio
+stanza
+weaviate
+weaviate_client
+numpy
+transformers
+nltk
+scikit-learn
+SPARQLWrapper
+spacy
+einops
+codecarbon
+peft
+fastapi
+pydantic

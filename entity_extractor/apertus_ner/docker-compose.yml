@@ -1,0 +1,83 @@
+networks:
+  OCR_Entity_Graph:
+    external: true
+services:
+  vllm-server:
+    image: apertus_ner-vllm-server:latest
+    build: 
+      context: .
+      dockerfile: Dockerfile.vllm
+    container_name: vllm-server
+    networks:
+      - OCR_Entity_Graph
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=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
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    ports:
+      - "8000:8000"
+    shm_size: '32gb'
+    ipc: host
+  ner_pipeline:
+    build: 
+      context: .
+      dockerfile: Dockerfile.ner
+      args:
+        HUGGINGFACE_CACHE: ${HUGGINGFACE_CACHE}
+    networks:
+      - OCR_Entity_Graph
+    runtime: nvidia
+    deploy:
+      #replicas: 3  # to run several worker containers, only works with docker swarm init
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+        NVIDIA_VISIBLE_DEVICES: "all"
+        # LLM Endpoint, change if external
+        LLM_ENPOINT: ""
+        # Chunking config
+        CERTAINTY: "0.75"
+        FUZZ: "80"
+        # GraphDB auth
+        GRAPHDB_USER: ""
+        GRAPHDB_PASSWORD: ""
+        # GraphDB connect
+        ENDPOINT_URL: "http://host.docker.internal:7200/repositories/AIS/statements"
+        GRAPH: "https://lindas.admin.ch/sfa/ais/extracted_entities"
+        # Weaviate collections
+        DOC_COLLECTION: "LoraDocuments"
+        CHUNK_COLLECTION: "LoraChunks"
+        PEOPLE_COLLECTION: "Persons"
+        ORG_COLLECTION: "Organizations"
+        GEO_COLLECTION: "Places"
+        # Weaviate connect
+        WEAVIATE_HTTP_HOST: "host.docker.internal"
+        WEAVIATE_HTTP_PORT: "8080"
+        WEAVIATE_HTTP_SECURE: "false"
+        WEAVIATE_GRPC_HOST: "host.docker.internal"
+        WEAVIATE_GRPC_PORT: "50051"
+        WEAVIATE_GRPC_SECURE: "false"
+        # Weaviate auth
+        WEAVIATE_API_KEY: ""
+        WEAVIATE_USER: ""
+        WEAVIATE_PASSWORD: ""
+        WEAVIATE_BEARER_TOKEN: ""
+        # Model loading
+        HUGGINGFACE_CACHE: "${HUGGINGFACE_CACHE}"
+        MODEL_NAME: "jinaai/jina-embeddings-v3"
+        TOKEN_LIMIT: "8192"
+    volumes:
+      - ${HUGGINGFACE_CACHE}:/root/.cache/huggingface
+      - ./logs:/logs
+    ports:
+      - "5000:5000"

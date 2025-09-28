@@ -1,0 +1,26 @@
+FROM nvidia/cuda:12.1.0-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y python3 python3-pip && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --upgrade pip
+
+# Install vLLM (compatible version for CUDA 12.1)
+RUN pip install nvidia-ml-py
+
+RUN pip install vllm
+
+RUN pip install "ray[serve]"
+
+RUN pip install flashinfer-python
+
+WORKDIR /app
+
+EXPOSE 8000
+# Entrypoint to launch vLLM OpenAI-compatible server
+ENTRYPOINT ["vllm", "serve"]
+
+# Default args: model name positional argument, plus flags
+CMD ["swiss-ai/Apertus-8B-Instruct-2509", "--trust-remote-code", "--host", "0.0.0.0", "--port", "8000", "--gpu-memory-utilization",  "0.9", "--max-model-len", "6000", "--kv-cache-memory", "6000000000"]

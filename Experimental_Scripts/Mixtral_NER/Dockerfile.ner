@@ -1,0 +1,46 @@
+# Base CUDA 12.1 image with Ubuntu
+FROM nvidia/cuda:12.1.0-base-ubuntu22.04
+
+# Install dependencies for Python build and system tools
+RUN apt-get update && apt-get install -y \
+    wget build-essential curl python3.12 python3.12-venv python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set Python 3.12.10 as default python3 and pip3
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
+RUN python3 -m pip install --upgrade pip
+
+# Install ollama client (replace with actual installation commands)
+RUN curl -Lo /usr/local/bin/ollama https://ollama-client-download-link && chmod +x /usr/local/bin/ollama
+
+# Create and activate virtual environment (optional for isolation)
+ENV VIRTUAL_ENV=/opt/venv
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+
+# Download spacy models
+RUN python -m spacy download de_core_news_lg \
+    && python -m spacy download fr_core_news_lg \
+    && python -m spacy download it_core_news_lg \
+    && python -m spacy download xx_ent_wiki_sm
+
+# Copy your semantic chunking pipeline code into the container
+COPY ./app /app
+WORKDIR /app
+
+# External volumes for huggingface cache and logs
+VOLUME /cache/huggingface
+VOLUME /logs
+
+# Environment variables for external caches and logs
+ENV HUGGINGFACE_CACHE=/cache/huggingface
+ENV LOG_DIR=/logs
+
+EXPOSE 7000
+
+# Default command to run the pipeline API or script
+CMD ["uvicorn", "apertus_ner_chunk:app", "--host", "0.0.0.0", "--port", "5000"]
